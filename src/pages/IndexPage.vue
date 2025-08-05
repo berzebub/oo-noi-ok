@@ -3,8 +3,14 @@
     <!-- Header -->
     <div class="simple-header">
       <div class="player-count">
-        <q-icon name="group" size="lg" color="primary" />
-        <span class="count-text">{{ activePlayers.length }} คน</span>
+        <div class="gender-count">
+          <q-icon name="male" size="md" color="blue" />
+          <span class="count-text">{{ activeMalePlayers.length }}</span>
+        </div>
+        <div class="gender-count">
+          <q-icon name="female" size="md" color="pink" />
+          <span class="count-text">{{ activeFemalePlayers.length }}</span>
+        </div>
       </div>
 
       <div class="court-count">
@@ -27,14 +33,7 @@
           <div class="text-body2 text-grey-6 q-mb-lg">
             เริ่มต้นโดยการเพิ่มผู้เล่นก่อน
           </div>
-          <q-btn
-            color="primary"
-            label="เพิ่มผู้เล่น"
-            icon="person_add"
-            to="/players"
-            size="lg"
-            rounded
-          />
+          <q-btn color="primary" label="เพิ่มผู้เล่น" icon="person_add" to="/players" size="lg" rounded />
         </q-card-section>
       </q-card>
     </div>
@@ -46,16 +45,12 @@
           <q-icon name="warning" size="3rem" color="amber" class="q-mb-md" />
           <div class="text-h6 q-mb-md">ผู้เล่นไม่เพียงพอ</div>
           <div class="text-body2 text-grey-6 q-mb-lg">
-            ต้องการผู้เล่นอย่างน้อย 4 คนที่พร้อมเล่น (ปัจจุบัน {{ activePlayers.length }} คน)
+            ต้องการผู้เล่นอย่างน้อย 4 คนที่พร้อมเล่น
+            <br>
+            (ปัจจุบัน: ชาย {{ activeMalePlayers.length }} คน, หญิง {{ activeFemalePlayers.length }} คน รวม {{
+              activePlayers.length }} คน)
           </div>
-          <q-btn
-            color="primary"
-            label="จัดการผู้เล่น"
-            icon="group"
-            to="/players"
-            size="md"
-            rounded
-          />
+          <q-btn color="primary" label="จัดการผู้เล่น" icon="group" to="/players" size="md" rounded />
         </q-card-section>
       </q-card>
     </div>
@@ -63,44 +58,29 @@
     <!-- Round Management -->
     <div v-if="activePlayers.length >= 4 && hasActiveSession" class="round-management">
       <div class="round-actions">
-        <q-btn
-          color="positive"
-          label="เริ่มรอบใหม่"
-          icon="refresh"
-          @click="startNewRound"
-          size="md"
-          :disable="loading"
-          outlined
-        />
-        <q-btn
-          color="negative"
-          label="จบ Session"
-          icon="stop"
-          @click="endSession"
-          size="md"
-          :disable="loading"
-          outlined
-        />
+        <q-btn color="positive" label="เริ่มรอบใหม่" icon="refresh" @click="startNewRound" size="md" :disable="loading"
+          outlined />
+        <q-btn color="negative" label="จบ Session" icon="stop" @click="stopWinnerStaysOn" size="md" :disable="loading"
+          outlined />
       </div>
     </div>
 
-        <!-- Main Action Buttons -->
+    <!-- Main Action Buttons -->
     <div v-else-if="activePlayers.length >= 4" class="action-buttons">
-      <!-- Single Random Match Button -->
-      <div class="single-option-section">
-        <q-btn
-          color="amber"
-          label="🎲 สุ่มคู่ผสม"
-          icon="casino"
-          @click="randomShuffle"
-          size="xl"
-          class="main-action-btn"
-          :loading="loading"
-          rounded
-        />
-        <!-- <div class="option-description">
-          {{ currentMatches.length === 0 ? 'เริ่มจับคู่โดยเน้นการผสมชาย-หญิง' : 'สุ่มคู่ใหม่โดยเน้นการผสมชาย-หญิง' }}
-        </div> -->
+      <!-- Winner Stays On Button -->
+      <div v-if="!isWinnerStaysOnMode" class="single-option-section">
+        <q-btn color="green" label="🏆 เริ่มเล่น " @click="startWinnerStaysOn" size="xl" class="main-action-btn"
+          :loading="loading" rounded />
+
+      </div>
+
+      <!-- Winner Stays On Controls -->
+      <div v-else class="winner-stays-controls">
+        <div class="mode-indicator">
+          <q-icon name="emoji_events" size="md" color="green" />
+          <span class="mode-text">โหมด Winner Stays On</span>
+        </div>
+        <q-btn color="negative" label="หยุดโหมด" icon="stop" @click="stopWinnerStaysOn" size="md" flat />
       </div>
     </div>
 
@@ -112,20 +92,11 @@
       </div>
 
       <div class="courts-grid">
-        <q-card
-          v-for="match in currentMatches"
-          :key="match.id"
-          class="court-card"
-        >
+        <q-card v-for="match in currentMatches" :key="match.id" class="court-card">
           <q-card-section>
             <!-- Court Header -->
             <div class="court-header">
-              <q-chip
-                :color="getCourtColor(match.courtNumber)"
-                text-color="white"
-                icon="sports_tennis"
-                size="lg"
-              >
+              <q-chip :color="getCourtColor(match.courtNumber)" text-color="white" icon="sports_tennis" size="lg">
                 คอร์ด {{ match.courtNumber }}
               </q-chip>
             </div>
@@ -133,19 +104,19 @@
             <!-- Teams -->
             <div class="teams-container">
               <!-- Team A -->
-              <div class="team">
-                <div class="team-name">ทีม A</div>
+              <div class="team"
+                :class="{ 'winning-team': isWinnerStaysOnMode && getCourtWinStreak(match.courtNumber)?.teamIndex === 0 }">
+                <div class="team-name">
+                  ทีม A
+                  <q-chip
+                    v-if="isWinnerStaysOnMode && getCourtWinStreak(match.courtNumber)?.teamIndex === 0 && getCourtWinStreak(match.courtNumber)?.winCount > 0"
+                    :label="`${getCourtWinStreak(match.courtNumber).winCount} ชนะ`" color="positive" text-color="white"
+                    size="sm" />
+                </div>
                 <div class="players">
-                  <div
-                    v-for="player in getTeamA(match)"
-                    :key="player.id"
-                    class="player-name"
-                  >
-                    <q-icon
-                      :name="player.gender === 'male' ? 'male' : 'female'"
-                      :color="player.gender === 'male' ? 'blue' : 'pink'"
-                      size="sm"
-                    />
+                  <div v-for="player in getTeamA(match)" :key="player.id" class="player-name">
+                    <q-icon :name="player.gender === 'male' ? 'male' : 'female'"
+                      :color="player.gender === 'male' ? 'blue' : 'pink'" size="sm" />
                     {{ player.name }}
                   </div>
                 </div>
@@ -157,23 +128,40 @@
               </div>
 
               <!-- Team B -->
-              <div class="team">
-                <div class="team-name">ทีม B</div>
+              <div class="team"
+                :class="{ 'winning-team': isWinnerStaysOnMode && getCourtWinStreak(match.courtNumber)?.teamIndex === 1 }">
+                <div class="team-name">
+                  ทีม B
+                  <q-chip
+                    v-if="isWinnerStaysOnMode && getCourtWinStreak(match.courtNumber)?.teamIndex === 1 && getCourtWinStreak(match.courtNumber)?.winCount > 0"
+                    :label="`${getCourtWinStreak(match.courtNumber).winCount} ชนะ`" color="positive" text-color="white"
+                    size="sm" />
+                </div>
                 <div class="players">
-                  <div
-                    v-for="player in getTeamB(match)"
-                    :key="player.id"
-                    class="player-name"
-                  >
-                    <q-icon
-                      :name="player.gender === 'male' ? 'male' : 'female'"
-                      :color="player.gender === 'male' ? 'blue' : 'pink'"
-                      size="sm"
-                    />
+                  <div v-for="player in getTeamB(match)" :key="player.id" class="player-name">
+                    <q-icon :name="player.gender === 'male' ? 'male' : 'female'"
+                      :color="player.gender === 'male' ? 'blue' : 'pink'" size="sm" />
                     {{ player.name }}
                   </div>
                 </div>
               </div>
+            </div>
+
+            <!-- Winner Stays On Result Buttons -->
+            <div v-if="isWinnerStaysOnMode && match.status === 'playing'" class="match-result-section">
+              <div class="result-title">ผลการแข่งขัน</div>
+              <div class="result-buttons">
+                <q-btn color="blue" label="ทีม A ชนะ" icon="military_tech" @click="recordMatchResult(match.id, 0)"
+                  :loading="loading" size="md" class="result-btn" />
+                <q-btn color="purple" label="ทีม B ชนะ" icon="military_tech" @click="recordMatchResult(match.id, 1)"
+                  :loading="loading" size="md" class="result-btn" />
+              </div>
+            </div>
+
+            <!-- Match Completed Status -->
+            <div v-if="match.status === 'completed'" class="match-completed">
+              <q-icon name="check_circle" color="positive" size="md" />
+              <span>ทีม {{ match.winner === 0 ? 'A' : 'B' }} ชนะ!</span>
             </div>
           </q-card-section>
         </q-card>
@@ -188,20 +176,17 @@
       </div>
 
       <div class="resting-players">
-        <q-chip
-          v-for="player in restingPlayers"
-          :key="player.id"
-          :color="player.gender === 'male' ? 'blue-grey' : 'purple'"
-          text-color="white"
-          :icon="player.gender === 'male' ? 'male' : 'female'"
-        >
+        <q-chip v-for="player in restingPlayers" :key="player.id"
+          :color="player.gender === 'male' ? 'blue-grey' : 'purple'" text-color="white"
+          :icon="player.gender === 'male' ? 'male' : 'female'">
           {{ player.name }}
+          <span v-if="isWinnerStaysOnMode" class="rounds-count">({{ getPlayerRoundsPlayed(player.id) }} รอบ)</span>
         </q-chip>
       </div>
     </div>
 
     <!-- Pair History Info -->
-    <div v-if="hasActiveSession && currentMatches.length > 0" class="pair-history-info">
+    <!-- <div v-if="hasActiveSession && currentMatches.length > 0" class="pair-history-info">
       <div class="history-title">
         <q-icon name="history" />
         ข้อมูล Session ปัจจุบัน
@@ -214,24 +199,12 @@
           รอบที่ {{ currentRoundNumber }}
         </q-chip>
       </div>
-    </div>
+    </div> -->
 
     <!-- Quick Access to Other Pages -->
     <div class="quick-links">
-      <q-btn
-        flat
-        icon="group"
-        label="จัดการผู้เล่น"
-        to="/players"
-        color="primary"
-      />
-      <q-btn
-        flat
-        icon="settings"
-        label="ตั้งค่า"
-        to="/settings"
-        color="grey"
-      />
+      <q-btn flat icon="group" label="จัดการผู้เล่น" to="/players" color="primary" />
+      <q-btn flat icon="settings" label="ตั้งค่า" to="/settings" color="grey" />
       <!-- <q-btn
         v-if="hasActiveSession"
         flat
@@ -251,7 +224,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { useBadmintonStore } from 'stores/badminton-store'
 import { useAuthStore } from 'stores/auth-store'
 import { useQuasar } from 'quasar'
@@ -267,11 +240,18 @@ const loading = ref(false)
 // Computed properties
 const totalPlayers = computed(() => badmintonStore.totalPlayers)
 const activePlayers = computed(() => badmintonStore.activePlayers)
+const activeMalePlayers = computed(() => badmintonStore.activePlayers.filter(p => p.gender === 'male'))
+const activeFemalePlayers = computed(() => badmintonStore.activePlayers.filter(p => p.gender === 'female'))
 const gameSettings = computed(() => badmintonStore.gameSettings)
 const currentMatches = computed(() => badmintonStore.currentMatches)
 const restingPlayers = computed(() => badmintonStore.restingPlayers)
 const hasActiveSession = computed(() => badmintonStore.hasActiveSession)
 const currentRoundNumber = computed(() => badmintonStore.currentRoundNumber)
+
+// Winner Stays On computed properties
+const isWinnerStaysOnMode = computed(() => badmintonStore.isWinnerStaysOnMode)
+const courtWinStreaks = computed(() => badmintonStore.courtWinStreaks)
+const playerPlayStats = computed(() => badmintonStore.playerPlayStats)
 
 // Functions
 function getCourtColor(courtNumber) {
@@ -285,6 +265,116 @@ function getTeamA(match) {
 
 function getTeamB(match) {
   return match.players.slice(2, 4)
+}
+
+// Winner Stays On functions
+function getCourtWinStreak(courtNumber) {
+  return courtWinStreaks.value[courtNumber]
+}
+
+// ฟังก์ชันดึงจำนวนรอบที่ผู้เล่นเล่นไปแล้ว
+function getPlayerRoundsPlayed(playerId) {
+  if (!isWinnerStaysOnMode.value) return 0
+  return badmintonStore.winnerStaysOnData.playerRounds[playerId] || 0
+}
+
+async function startWinnerStaysOn() {
+  loading.value = true
+
+  try {
+    const result = badmintonStore.startWinnerStaysOnMode()
+
+    if (result.success) {
+      $q.notify({
+        type: 'positive',
+        message: '🏆 เริ่มโหมด Winner Stays On แล้ว!',
+        position: 'top',
+        timeout: 2000
+      })
+    } else {
+      $q.notify({
+        type: 'negative',
+        message: result.message,
+        position: 'top'
+      })
+    }
+  } catch (error) {
+    console.error('Error starting Winner Stays On mode:', error)
+    $q.notify({
+      type: 'negative',
+      message: 'เกิดข้อผิดพลาดในการเริ่มโหมด',
+      position: 'top'
+    })
+  }
+
+  loading.value = false
+}
+
+async function stopWinnerStaysOn() {
+  $q.dialog({
+    title: 'หยุดโหมด Winner Stays On',
+    message: 'ต้องการหยุดโหมด Winner Stays On หรือไม่?',
+    ok: {
+      label: 'หยุด',
+      color: 'negative'
+    },
+    cancel: {
+      label: 'ยกเลิก',
+      color: 'grey'
+    },
+    persistent: true
+  }).onOk(() => {
+    const result = badmintonStore.stopWinnerStaysOnMode()
+    badmintonStore.endSession()
+
+
+    if (result.success) {
+      $q.notify({
+        type: 'warning',
+        message: result.message,
+        position: 'top'
+      })
+    }
+  })
+}
+
+async function recordMatchResult(matchId, winnerTeam) {
+  loading.value = true
+
+  try {
+    const result = badmintonStore.recordWinnerStaysOnResult(matchId, winnerTeam)
+
+    if (result.success) {
+      $q.notify({
+        type: 'positive',
+        message: result.message,
+        position: 'top',
+        timeout: 3000
+      })
+
+      // Force reactive update
+      await nextTick()
+
+      // หน่วงเวลาเล็กน้อยเพื่อให้ผู้ใช้เห็นผล
+      await new Promise(resolve => setTimeout(resolve, 1000))
+
+    } else {
+      $q.notify({
+        type: 'negative',
+        message: result.message || 'เกิดข้อผิดพลาดในการบันทึกผล',
+        position: 'top'
+      })
+    }
+  } catch (error) {
+    console.error('Error recording match result:', error)
+    $q.notify({
+      type: 'negative',
+      message: 'เกิดข้อผิดพลาดในการบันทึกผล',
+      position: 'top'
+    })
+  }
+
+  loading.value = false
 }
 
 // Firestore functions
@@ -315,54 +405,25 @@ const loadPlayersFromFirestore = async () => {
   }
 }
 
-// Load players on component mount
-onMounted(() => {
+// Load data on component mount
+onMounted(async () => {
   if (authStore.isLoggedIn && !authStore.isOfflineMode) {
-    loadPlayersFromFirestore()
+    // โหลด gameSettings จาก Firestore ก่อน (ถ้ายังไม่ได้โหลด)
+    try {
+      await badmintonStore.loadGameSettingsFromFirestore(authStore.userId)
+    } catch (error) {
+      console.error('Failed to load game settings:', error)
+    }
+
+    // ถ้ายังไม่มี players หรือมี session ที่ active อยู่ ไม่ต้อง reload จาก Firestore
+    // เพื่อป้องกันการ overwrite ข้อมูลที่ persist ไว้
+    if (badmintonStore.totalPlayers === 0 && !badmintonStore.hasActiveSession) {
+      loadPlayersFromFirestore()
+    }
   }
 })
 
-async function randomShuffle() {
-  if (activePlayers.value.length < 4) {
-    $q.notify({
-      type: 'warning',
-      message: 'ต้องมีผู้เล่นอย่างน้อย 4 คน',
-      position: 'top'
-    })
-    return
-  }
 
-  loading.value = true
-
-  try {
-    const matches = badmintonStore.randomMatch()
-
-    if (matches.length > 0) {
-      const mixedCount = matches.filter(match => match.type === 'mixed').length
-      const roundText = hasActiveSession.value ? ` รอบที่ ${currentRoundNumber.value}` : ''
-      $q.notify({
-        type: 'positive',
-        message: `🎲 สุ่มคู่ผสมเพศ!${roundText} ${matches.length} คอร์ด (ผสม ${mixedCount} คอร์ด)`,
-        position: 'top',
-        timeout: 3000
-      })
-    } else {
-      $q.notify({
-        type: 'warning',
-        message: 'ไม่สามารถสุ่มคู่ได้',
-        position: 'top'
-      })
-    }
-  } catch (error) {
-    $q.notify({
-      type: 'negative',
-      message: 'เกิดข้อผิดพลาด: ' + error.message,
-      position: 'top'
-    })
-  }
-
-  loading.value = false
-}
 
 async function startNewRound() {
   loading.value = true
@@ -450,7 +511,21 @@ function endSession() {
   border-radius: 16px;
 }
 
-.player-count,
+.player-count {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 12px;
+}
+
+.gender-count {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .court-count,
 .round-info {
   display: flex;
@@ -723,6 +798,97 @@ function endSession() {
     height: 40px;
     font-size: 16px;
     justify-self: center;
+  }
+}
+
+/* Winner Stays On Styles */
+.winner-stays-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  background: linear-gradient(135deg, #4caf50 0%, #8bc34a 100%);
+  border-radius: 12px;
+  color: white;
+}
+
+.mode-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mode-text {
+  font-size: 18px;
+  font-weight: bold;
+}
+
+.winning-team {
+  background: linear-gradient(135deg, rgba(76, 175, 80, 0.1) 0%, rgba(76, 175, 80, 0.05) 100%);
+  border: 2px solid #4caf50;
+}
+
+.match-result-section {
+  margin-top: 16px;
+  padding: 16px;
+  background: #f8f9fa;
+  border-radius: 8px;
+  border-top: 1px solid #e0e0e0;
+}
+
+.result-title {
+  text-align: center;
+  font-weight: bold;
+  color: #333;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+
+.result-buttons {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.result-btn {
+  flex: 1;
+  max-width: 140px;
+}
+
+.match-completed {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 12px;
+  background: linear-gradient(135deg, #4caf50 0%, #8bc34a 100%);
+  color: white;
+  border-radius: 8px;
+  font-weight: bold;
+}
+
+/* Rounds count style */
+.rounds-count {
+  margin-left: 6px;
+  font-size: 0.85em;
+  opacity: 0.9;
+  font-weight: normal;
+}
+
+@media (max-width: 768px) {
+  .winner-stays-controls {
+    flex-direction: column;
+    gap: 12px;
+    text-align: center;
+  }
+
+  .result-buttons {
+    flex-direction: column;
+  }
+
+  .result-btn {
+    max-width: none;
   }
 }
 </style>

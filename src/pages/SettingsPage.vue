@@ -24,32 +24,13 @@
 
         <q-card-section class="setting-content">
           <div class="input-wrapper">
-            <q-input
-              v-model.number="localSettings.courts"
-              type="number"
-              outlined
-              min="1"
-              max="10"
-              class="modern-input"
-              :rules="[val => val > 0 || 'ต้องมากกว่า 0']"
-            />
+            <q-input v-model.number="localSettings.courts" type="number" outlined min="1" max="10" class="modern-input"
+              :rules="[val => val > 0 || 'ต้องมากกว่า 0']" />
             <div class="input-controls">
-              <q-btn
-                round
-                flat
-                icon="remove"
-                @click="adjustCourts(-1)"
-                :disable="localSettings.courts <= 1"
-                class="control-btn"
-              />
-              <q-btn
-                round
-                flat
-                icon="add"
-                @click="adjustCourts(1)"
-                :disable="localSettings.courts >= 10"
-                class="control-btn"
-              />
+              <q-btn round flat icon="remove" @click="adjustCourts(-1)" :disable="localSettings.courts <= 1"
+                class="control-btn" />
+              <q-btn round flat icon="add" @click="adjustCourts(1)" :disable="localSettings.courts >= 10"
+                class="control-btn" />
             </div>
           </div>
           <div class="setting-note">
@@ -72,37 +53,46 @@
 
         <q-card-section class="setting-content">
           <div class="input-wrapper">
-            <q-input
-              v-model.number="localSettings.hoursPerSession"
-              type="number"
-              outlined
-              min="0.5"
-              max="8"
-              step="0.5"
-              class="modern-input"
-              :rules="[val => val > 0 || 'ต้องมากกว่า 0']"
-            />
+            <q-input v-model.number="localSettings.hoursPerSession" type="number" outlined min="0.5" max="8" step="0.5"
+              class="modern-input" :rules="[val => val > 0 || 'ต้องมากกว่า 0']" />
             <div class="input-controls">
-              <q-btn
-                round
-                flat
-                icon="remove"
-                @click="adjustHours(-0.5)"
-                :disable="localSettings.hoursPerSession <= 0.5"
-                class="control-btn"
-              />
-              <q-btn
-                round
-                flat
-                icon="add"
-                @click="adjustHours(0.5)"
-                :disable="localSettings.hoursPerSession >= 8"
-                class="control-btn"
-              />
+              <q-btn round flat icon="remove" @click="adjustHours(-0.5)" :disable="localSettings.hoursPerSession <= 0.5"
+                class="control-btn" />
+              <q-btn round flat icon="add" @click="adjustHours(0.5)" :disable="localSettings.hoursPerSession >= 8"
+                class="control-btn" />
             </div>
           </div>
           <div class="setting-note">
             ระหว่าง 0.5-8 ชั่วโมง
+          </div>
+        </q-card-section>
+      </q-card>
+
+      <!-- Winner Stays On Setting -->
+      <q-card class="setting-card">
+        <q-card-section class="card-header">
+          <div class="setting-icon winner-icon">
+            <q-icon name="emoji_events" size="2rem" color="white" />
+          </div>
+          <div class="setting-info">
+            <h3 class="setting-title">Winner Stays On</h3>
+            <p class="setting-desc">ทีมชนะอยู่ต่อได้กี่เกมส์</p>
+          </div>
+        </q-card-section>
+
+        <q-card-section class="setting-content">
+          <div class="input-wrapper">
+            <q-input v-model.number="localSettings.winnerStaysOnWins" type="number" outlined min="1" max="5"
+              class="modern-input" :rules="[val => val > 0 || 'ต้องมากกว่า 0']" />
+            <div class="input-controls">
+              <q-btn round flat icon="remove" @click="adjustWinnerStays(-1)"
+                :disable="localSettings.winnerStaysOnWins <= 1" class="control-btn" />
+              <q-btn round flat icon="add" @click="adjustWinnerStays(1)" :disable="localSettings.winnerStaysOnWins >= 5"
+                class="control-btn" />
+            </div>
+          </div>
+          <div class="setting-note">
+            ระหว่าง 1-5 เกมส์ (ชนะติดต่อกันเท่านี้แล้วต้องออกพัก)
           </div>
         </q-card-section>
       </q-card>
@@ -131,40 +121,29 @@
 
     <!-- Action Buttons -->
     <div class="action-buttons">
-      <q-btn
-        color="positive"
-        size="lg"
-        label="บันทึกการตั้งค่า"
-        icon="save"
-        @click="saveSettings"
-        class="save-btn"
-        :loading="saving"
-      />
-      <q-btn
-        color="grey-6"
-        size="lg"
-        label="รีเซ็ต"
-        icon="refresh"
-        @click="resetToDefault"
-        flat
-        class="reset-btn"
-      />
+      <q-btn color="positive" size="lg" label="บันทึกการตั้งค่า" icon="save" @click="saveSettings" class="save-btn"
+        :loading="saving" />
+      <q-btn color="grey-6" size="lg" label="รีเซ็ต" icon="refresh" @click="resetToDefault" flat class="reset-btn" />
     </div>
   </q-page>
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useBadmintonStore } from 'stores/badminton-store'
+import { useAuthStore } from 'stores/auth-store'
 import { useQuasar } from 'quasar'
+// Firebase imports removed - now handled in badminton-store.js
 
 const $q = useQuasar()
 const badmintonStore = useBadmintonStore()
+const authStore = useAuthStore()
 
 const saving = ref(false)
 const localSettings = ref({
   courts: badmintonStore.gameSettings.courts,
-  hoursPerSession: badmintonStore.gameSettings.hoursPerSession
+  hoursPerSession: badmintonStore.gameSettings.hoursPerSession,
+  winnerStaysOnWins: badmintonStore.gameSettings.winnerStaysOnWins || 2
 })
 
 // Computed
@@ -187,19 +166,37 @@ const adjustHours = (amount) => {
   }
 }
 
+const adjustWinnerStays = (amount) => {
+  const newValue = localSettings.value.winnerStaysOnWins + amount
+  if (newValue >= 1 && newValue <= 5) {
+    localSettings.value.winnerStaysOnWins = newValue
+  }
+}
+
+// Note: Firestore functions have been moved to badminton-store.js for better centralization
+
 const saveSettings = async () => {
   saving.value = true
 
   try {
-    badmintonStore.updateGameSettings(localSettings.value)
+    // ใช้ฟังก์ชันใหม่ใน store ที่จัดการทั้ง local update และ Firestore
+    const result = await badmintonStore.updateGameSettingsWithFirestore(
+      localSettings.value,
+      authStore.isOfflineMode ? null : authStore.userId
+    )
 
-    $q.notify({
-      type: 'positive',
-      message: '✅ บันทึกการตั้งค่าแล้ว!',
-      position: 'top',
-      timeout: 3000
-    })
+    if (result.success) {
+      $q.notify({
+        type: 'positive',
+        message: `✅ บันทึกการตั้งค่าแล้ว!${authStore.isOfflineMode ? ' (ออฟไลน์)' : ''}`,
+        position: 'top',
+        timeout: 3000
+      })
+    } else {
+      throw new Error(result.error || 'Unknown error')
+    }
   } catch (error) {
+    console.error('Error saving settings:', error)
     $q.notify({
       type: 'negative',
       message: 'เกิดข้อผิดพลาดในการบันทึก',
@@ -210,7 +207,7 @@ const saveSettings = async () => {
   saving.value = false
 }
 
-const resetToDefault = () => {
+const resetToDefault = async () => {
   $q.dialog({
     title: 'รีเซ็ตการตั้งค่า',
     message: 'ต้องการรีเซ็ตเป็นค่าเริ่มต้นหรือไม่?',
@@ -223,10 +220,27 @@ const resetToDefault = () => {
       color: 'grey'
     },
     persistent: true
-  }).onOk(() => {
-    localSettings.value = {
+  }).onOk(async () => {
+    const defaultSettings = {
       courts: 2,
-      hoursPerSession: 2
+      hoursPerSession: 2,
+      winnerStaysOnWins: 2
+    }
+
+    localSettings.value = defaultSettings
+
+    // Save default settings using store function
+    try {
+      const result = await badmintonStore.updateGameSettingsWithFirestore(
+        defaultSettings,
+        authStore.isOfflineMode ? null : authStore.userId
+      )
+
+      if (!result.success) {
+        console.error('Error saving reset settings:', result.error)
+      }
+    } catch (error) {
+      console.error('Error saving reset settings:', error)
     }
 
     $q.notify({
@@ -238,11 +252,32 @@ const resetToDefault = () => {
   })
 }
 
+// Load settings on component mount
+onMounted(async () => {
+  if (authStore.isLoggedIn && !authStore.isOfflineMode) {
+    // ใช้ฟังก์ชันใหม่จาก store
+    const result = await badmintonStore.loadGameSettingsFromFirestore(authStore.userId)
+
+    if (result && result.success) {
+      // อัพเดท local settings ให้ตรงกับ store
+      localSettings.value = {
+        courts: badmintonStore.gameSettings.courts,
+        hoursPerSession: badmintonStore.gameSettings.hoursPerSession,
+        winnerStaysOnWins: badmintonStore.gameSettings.winnerStaysOnWins || 2
+      }
+      console.log('Settings loaded successfully')
+    } else {
+      console.warn('Failed to load settings from Firestore, using defaults')
+    }
+  }
+})
+
 // Watch for external changes
 watch(() => badmintonStore.gameSettings, (newSettings) => {
   localSettings.value = {
     courts: newSettings.courts,
-    hoursPerSession: newSettings.hoursPerSession
+    hoursPerSession: newSettings.hoursPerSession,
+    winnerStaysOnWins: newSettings.winnerStaysOnWins || 2
   }
 }, { deep: true })
 </script>
@@ -312,6 +347,10 @@ watch(() => badmintonStore.gameSettings, (newSettings) => {
 
 .hours-icon {
   background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%) !important;
+}
+
+.winner-icon {
+  background: linear-gradient(135deg, #FFD700 0%, #FFA500 100%) !important;
 }
 
 .setting-icon {

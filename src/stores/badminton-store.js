@@ -1,6 +1,13 @@
 import { defineStore } from 'pinia'
+import { doc, getDoc, setDoc } from 'firebase/firestore'
+import { db } from 'boot/firebase'
 
 export const useBadmintonStore = defineStore('badminton', {
+  persist: {
+    key: 'badminton-store',
+    storage: localStorage,
+    paths: ['players', 'gameSettings', 'currentSession', 'currentMatches', 'waitingPlayers', 'winnerStaysOnData']
+  },
   state: () => ({
     // ข้อมูลผู้เล่น
     players: [],
@@ -13,7 +20,8 @@ export const useBadmintonStore = defineStore('badminton', {
       shuttlecockPrice: 90,   // ราคาลูกต่อลูก
       shuttlecockCount: 3,    // จำนวนลูกที่ใช้
       roundDuration: 15,       // นาทีต่อรอบ
-      gameMode: 'normal' // 'normal', 'tournament'
+      gameMode: 'normal', // 'normal', 'tournament', 'winnerStaysOn'
+      winnerStaysOnWins: 2    // จำนวนเกมส์ที่ทีมชนะอยู่ต่อได้
     },
 
     // ข้อมูล Session ปัจจุบัน
@@ -24,7 +32,7 @@ export const useBadmintonStore = defineStore('badminton', {
       participants: [],
       rounds: [],           // เก็บรอบการเล่นทั้งหมด
       currentRound: 0,      // รอบปัจจุบัน
-      pairHistory: new Map(), // เก็บประวัติคู่ที่เล่นด้วยกันแล้ว
+      pairHistory: {}, // เก็บประวัติคู่ที่เล่นด้วยกันแล้ว
       totalCost: 0,
       mode: 'normal',
       tournament: {
@@ -40,7 +48,15 @@ export const useBadmintonStore = defineStore('badminton', {
     // ประวัติการเล่นทั้งหมด
     gameHistory: [],
 
-    waitingPlayers: [] // ผู้เล่นที่รอคิว
+    waitingPlayers: [], // ผู้เล่นที่รอคิว
+
+    // Winner Stays On Mode
+    winnerStaysOnData: {
+      isActive: false,
+      courtWinStreaks: {}, // { courtNumber: { teamIndex: 0|1, winCount: 0, teamPlayers: [...] } }
+      matchHistory: [], // เก็บประวัติการแข่งขันแต่ละเกมส์
+      playerRounds: {} // เก็บจำนวนรอบที่แต่ละคนเล่น { playerId: roundCount }
+    }
   }),
 
   getters: {
@@ -59,10 +75,10 @@ export const useBadmintonStore = defineStore('badminton', {
     // คำนวณค่าใช้จ่ายรวม
     totalCost: (state) => {
       const courtCost = state.gameSettings.courts *
-                       state.gameSettings.hoursPerSession *
-                       state.gameSettings.pricePerCourtHour
+        state.gameSettings.hoursPerSession *
+        state.gameSettings.pricePerCourtHour
       const shuttleCost = state.gameSettings.shuttlecockCount *
-                         state.gameSettings.shuttlecockPrice
+        state.gameSettings.shuttlecockPrice
       return courtCost + shuttleCost
     },
 
@@ -89,7 +105,11 @@ export const useBadmintonStore = defineStore('badminton', {
     restingPlayers: (state) => {
       if (!state.currentMatches.length) return []
 
-      const playingPlayers = state.currentMatches.flatMap(match => match.players.map(p => p.id))
+      // ตรวจสอบว่าแต่ละ match มี players หรือไม่
+      const playingPlayers = state.currentMatches
+        .filter(match => match && match.players && Array.isArray(match.players))
+        .flatMap(match => match.players.map(p => p.id))
+
       return state.activePlayers.filter(player => !playingPlayers.includes(player.id))
     },
 
@@ -102,6 +122,23 @@ export const useBadmintonStore = defineStore('badminton', {
     canPlayTournament: (state) => {
       const playerCount = state.activePlayers.length
       return playerCount >= 8 && playerCount % 4 === 0
+    },
+
+    // Winner Stays On getters
+    isWinnerStaysOnMode: (state) => state.winnerStaysOnData.isActive,
+
+    courtWinStreaks: (state) => state.winnerStaysOnData.courtWinStreaks,
+
+    winnerStaysOnHistory: (state) => state.winnerStaysOnData.matchHistory,
+
+    // สถิติการเล่นของแต่ละคน (จำนวนรอบที่เล่น)
+    playerPlayStats: (state) => {
+      if (!state.winnerStaysOnData.isActive) return []
+
+      return state.activePlayers.map(player => ({
+        ...player,
+        roundsPlayed: state.winnerStaysOnData.playerRounds[player.id] || 0
+      })).sort((a, b) => a.roundsPlayed - b.roundsPlayed) // เรียงจากน้อยไปมาก
     }
   },
 
@@ -174,14 +211,14 @@ export const useBadmintonStore = defineStore('badminton', {
     // เพิ่มคู่เข้าประวัติ
     addPairToHistory(player1Id, player2Id) {
       const key = this.createPairKey(player1Id, player2Id)
-      const currentCount = this.currentSession.pairHistory.get(key) || 0
-      this.currentSession.pairHistory.set(key, currentCount + 1)
+      const currentCount = this.currentSession.pairHistory[key] || 0
+      this.currentSession.pairHistory[key] = currentCount + 1
     },
 
     // ตรวจสอบว่าคู่นี้เคยเล่นด้วยกันแล้วหรือไม่
     havePaired(player1Id, player2Id) {
       const key = this.createPairKey(player1Id, player2Id)
-      return (this.currentSession.pairHistory.get(key) || 0) > 0
+      return (this.currentSession.pairHistory[key] || 0) > 0
     },
 
     // คำนวณคะแนนความเหมาะสมของการจับคู่
@@ -253,69 +290,7 @@ export const useBadmintonStore = defineStore('badminton', {
       return matches
     },
 
-    // สร้างการจับคู่แบบสุ่มใหม่ (เน้นการผสมเพศ) พร้อมป้องกันการซ้ำคู่
-    generateRandomMatches() {
-      if (this.activePlayers.length < 4) {
-        this.currentMatches = []
-        this.waitingPlayers = []
-        return []
-      }
 
-      // ถ้ายังไม่มี session ให้เริ่มใหม่
-      if (!this.hasActiveSession) {
-        this.startSession()
-      }
-
-      // Reset การจับคู่ปัจจุบัน
-      this.currentMatches = []
-
-      // แยกผู้เล่นตามเพศ
-      const malePlayers = this.shuffleArray(this.activePlayers.filter(p => p.gender === 'male'))
-      const femalePlayers = this.shuffleArray(this.activePlayers.filter(p => p.gender === 'female'))
-
-      const matches = []
-      const maxPossibleCourts = Math.min(
-        this.gameSettings.courts,
-        Math.floor(this.activePlayers.length / 4)
-      )
-
-      // สร้างกลุ่มที่ผสมเพศให้ได้มากที่สุด พร้อมพิจารณา pair history
-      const mixedGroups = this.createMixedGenderGroupsWithHistory(malePlayers, femalePlayers, maxPossibleCourts)
-
-      for (let court = 0; court < mixedGroups.length; court++) {
-        const players = mixedGroups[court]
-
-                 if (players.length === 4) {
-           // จัดเรียงผู้เล่นให้ทีม A และ B ผสมเพศให้ดีที่สุด
-           const arrangedPlayers = this.arrangePlayersForMixedTeams(players)
-
-           const match = {
-             id: `match-${Date.now()}-${court + 1}-${Math.random().toString(36).substr(2, 5)}`,
-             courtNumber: court + 1,
-             players: arrangedPlayers,
-             type: this.determineMatchType(arrangedPlayers),
-             score: 0, // สุ่มแบบไม่มีคะแนน
-             roundNumber: this.currentSession.currentRound + 1,
-             status: 'playing',
-             result: null,
-             winner: null
-           }
-
-           matches.push(match)
-         }
-      }
-
-      // คำนวณผู้เล่นที่พัก
-      const playingPlayers = matches.flatMap(match => match.players.map(p => p.id))
-      this.waitingPlayers = this.activePlayers.filter(player => !playingPlayers.includes(player.id))
-
-      this.currentMatches = matches
-
-      // บันทึกประวัติการจับคู่
-      this.saveMatchesToHistory(matches)
-
-      return matches
-    },
 
     // สร้างกลุ่มผู้เล่นที่เน้นการผสมเพศและจัดการกรณีผู้เล่นไม่ครบคู่
     createMixedGenderGroups(malePlayers, femalePlayers, maxCourts) {
@@ -440,14 +415,22 @@ export const useBadmintonStore = defineStore('badminton', {
       return groups
     },
 
-    // หากลุ่ม 4 คนที่มี pair history น้อยที่สุด
+    // หากลุ่ม 4 คนที่มี pair history น้อยที่สุด โดยให้ความสำคัญกับการผสมเพศ
     findBestGroupWithHistory(availablePlayers) {
       if (availablePlayers.length < 4) return null
 
+      const males = availablePlayers.filter(p => p.gender === 'male')
+      const females = availablePlayers.filter(p => p.gender === 'female')
+
+      // ลำดับความสำคัญ: พยายามหากลุ่ม 2 ชาย 2 หญิง ก่อน
+      if (males.length >= 2 && females.length >= 2) {
+        return this.findBestMixedGroup(males, females)
+      }
+
+      // ถ้าไม่สามารถสร้างกลุ่มผสมได้ ใช้วิธีเดิม
       let bestGroup = null
       let lowestHistoryScore = Infinity
 
-      // ลองทุกการจับคู่ที่เป็นไปได้ (สุ่มตัวอย่าง 50 กลุ่มเพื่อประสิทธิภาพ)
       const maxTries = Math.min(50, Math.floor(availablePlayers.length / 4) * 20)
 
       for (let attempt = 0; attempt < maxTries; attempt++) {
@@ -477,6 +460,45 @@ export const useBadmintonStore = defineStore('badminton', {
           // ถ้าได้กลุ่มที่ไม่มี history เลย และผสมเพศ ให้หยุดทันที
           if (historyScore <= -0.5) {
             break
+          }
+        }
+      }
+
+      return bestGroup
+    },
+
+    // หากลุ่มผสม 2 ชาย 2 หญิง ที่มี pair history น้อยที่สุด
+    findBestMixedGroup(males, females) {
+      let bestGroup = null
+      let lowestHistoryScore = Infinity
+
+      // ลองทุกการจับคู่ 2 ชาย 2 หญิง ที่เป็นไปได้
+      for (let i = 0; i < males.length - 1; i++) {
+        for (let j = i + 1; j < males.length; j++) {
+          for (let k = 0; k < females.length - 1; k++) {
+            for (let l = k + 1; l < females.length; l++) {
+              const testGroup = [males[i], males[j], females[k], females[l]]
+
+              // คำนวณคะแนน history
+              let historyScore = 0
+              for (let m = 0; m < 3; m++) {
+                for (let n = m + 1; n < 4; n++) {
+                  if (this.havePaired(testGroup[m].id, testGroup[n].id)) {
+                    historyScore += 1
+                  }
+                }
+              }
+
+              if (historyScore < lowestHistoryScore) {
+                lowestHistoryScore = historyScore
+                bestGroup = [...testGroup]
+
+                // ถ้าได้กลุ่มที่ไม่มี history เลย ให้หยุดทันที
+                if (historyScore === 0) {
+                  return bestGroup
+                }
+              }
+            }
           }
         }
       }
@@ -514,73 +536,85 @@ export const useBadmintonStore = defineStore('badminton', {
         const remaining = [...maleQueue, ...femaleQueue]
         if (remaining.length >= 4) {
           const shuffled = this.shuffleArray(remaining)
-          group.push(...shuffled.slice(0, 4))
+          const selectedPlayers = shuffled.slice(0, 4)
+          group.push(...selectedPlayers)
+
+          // ลบคนที่ใช้ไปแล้วออกจาก queue
+          selectedPlayers.forEach(usedPlayer => {
+            if (usedPlayer.gender === 'male') {
+              const index = maleQueue.findIndex(p => p.id === usedPlayer.id)
+              if (index > -1) maleQueue.splice(index, 1)
+            } else {
+              const index = femaleQueue.findIndex(p => p.id === usedPlayer.id)
+              if (index > -1) femaleQueue.splice(index, 1)
+            }
+          })
         }
       }
     },
 
-     // จัดเรียงผู้เล่น 4 คนให้ทีม A และ B ผสมเพศให้ดีที่สุด และป้องกันการจับคู่ที่ไม่สมดุล
-     arrangePlayersForMixedTeams(players) {
-       if (players.length !== 4) return players
+    // จัดเรียงผู้เล่น 4 คนให้ทีม A และ B ผสมเพศให้ดีที่สุด และป้องกันการจับคู่ที่ไม่สมดุล
+    arrangePlayersForMixedTeams(players) {
+      if (players.length !== 4) return players
 
-       const males = players.filter(p => p.gender === 'male')
-       const females = players.filter(p => p.gender === 'female')
+      const males = players.filter(p => p.gender === 'male')
+      const females = players.filter(p => p.gender === 'female')
 
-       // กรณี 2 ชาย 2 หญิง - ต้องรับประกันว่าแต่ละทีมผสมเพศ
-       if (males.length === 2 && females.length === 2) {
-         // ทีม A: ชาย 1 + หญิง 1, ทีม B: ชาย 1 + หญิง 1
-         // ป้องกันการเกิด ทีม A: ชาย 2, ทีม B: หญิง 2
-         return [males[0], females[0], males[1], females[1]]
-       }
+      // กรณี 2 ชาย 2 หญิง - ต้องรับประกันว่าแต่ละทีมผสมเพศ
+      if (males.length === 2 && females.length === 2) {
+        // ทีม A: ชาย 1 + หญิง 1, ทีม B: ชาย 1 + หญิง 1
+        // ป้องกันการเกิด ทีม A: ชาย 2, ทีม B: หญิง 2
+        return [males[0], females[0], males[1], females[1]]
+      }
 
-       // กรณี 3 ชาย 1 หญิง
-       else if (males.length === 3 && females.length === 1) {
-         // ทีม A: ชาย 1 + หญิง 1, ทีม B: ชาย 2
-         return [males[0], females[0], males[1], males[2]]
-       }
+      // กรณี 3 ชาย 1 หญิง
+      else if (males.length === 3 && females.length === 1) {
+        // ทีม A: ชาย 1 + หญิง 1, ทีม B: ชาย 2
+        return [males[0], females[0], males[1], males[2]]
+      }
 
-       // กรณี 1 ชาย 3 หญิง
-       else if (males.length === 1 && females.length === 3) {
-         // ทีม A: ชาย 1 + หญิง 1, ทีม B: หญิง 2
-         return [males[0], females[0], females[1], females[2]]
-       }
+      // กรณี 1 ชาย 3 หญิง
+      else if (males.length === 1 && females.length === 3) {
+        // ทีม A: ชาย 1 + หญิง 1, ทีม B: หญิง 2
+        return [males[0], females[0], females[1], females[2]]
+      }
 
-       // กรณี 4 ชาย - แบ่งเท่า ๆ กัน
-       else if (males.length === 4 && females.length === 0) {
-         // ทีม A: ชาย 2, ทีม B: ชาย 2
-         return [males[0], males[1], males[2], males[3]]
-       }
+      // กรณี 4 ชาย - แบ่งเท่า ๆ กัน
+      else if (males.length === 4 && females.length === 0) {
+        // ทีม A: ชาย 2, ทีม B: ชาย 2
+        return [males[0], males[1], males[2], males[3]]
+      }
 
-       // กรณี 4 หญิง - แบ่งเท่า ๆ กัน
-       else if (females.length === 4 && males.length === 0) {
-         // ทีม A: หญิง 2, ทีม B: หญิง 2
-         return [females[0], females[1], females[2], females[3]]
-       }
+      // กรณี 4 หญิง - แบ่งเท่า ๆ กัน
+      else if (females.length === 4 && males.length === 0) {
+        // ทีม A: หญิง 2, ทีม B: หญิง 2
+        return [females[0], females[1], females[2], females[3]]
+      }
 
-       // กรณีอื่น ๆ ที่ไม่คาดคิด
-       else {
-         // สุ่มแต่ตรวจสอบไม่ให้เกิดการจับคู่ที่ไม่สมดุล
-         const shuffled = this.shuffleArray(players)
+      // กรณีอื่น ๆ ที่ไม่คาดคิด
+      else {
+        // สุ่มแต่ตรวจสอบไม่ให้เกิดการจับคู่ที่ไม่สมดุล
+        const shuffled = this.shuffleArray(players)
 
-         // ตรวจสอบว่าทีม A และ B มีเพศเดียวกันหรือไม่
-         const teamA = shuffled.slice(0, 2)
-         const teamB = shuffled.slice(2, 4)
+        // ตรวจสอบว่าทีม A และ B มีเพศเดียวกันหรือไม่
+        const teamA = shuffled.slice(0, 2)
+        const teamB = shuffled.slice(2, 4)
 
-         const teamAGenders = new Set(teamA.map(p => p.gender))
-         const teamBGenders = new Set(teamB.map(p => p.gender))
+        const teamAGenders = new Set(teamA.map(p => p.gender))
+        const teamBGenders = new Set(teamB.map(p => p.gender))
 
-                  // ถ้าทีม A และ B เป็นเพศเดียวกันแต่ต่างเพศ (เช่น A=ชาย, B=หญิง) ให้สลับ
-         if (teamAGenders.size === 1 && teamBGenders.size === 1 &&
-             [...teamAGenders][0] !== [...teamBGenders][0]) {
-           // สลับ player 1 คนเพื่อให้ผสม
-           return [shuffled[0], shuffled[2], shuffled[1], shuffled[3]]
-         }
+        // ถ้าทีม A และ B เป็นเพศเดียวกันแต่ต่างเพศ (เช่น A=ชาย, B=หญิง) ให้สลับ
+        if (teamAGenders.size === 1 && teamBGenders.size === 1 &&
+          [...teamAGenders][0] !== [...teamBGenders][0]) {
+          // สลับ player 1 คนเพื่อให้ผสม
+          return [shuffled[0], shuffled[2], shuffled[1], shuffled[3]]
+        }
 
-         return shuffled
-       }
-     },
+        return shuffled
+      }
+    },
 
-     // ฟังก์ชันสุ่มอาเรย์ (Fisher-Yates shuffle)
+    // ฟังก์ชันสุ่มอาเรย์ (Fisher-Yates shuffle)
     shuffleArray(array) {
       const shuffled = [...array]
       for (let i = shuffled.length - 1; i > 0; i--) {
@@ -598,20 +632,20 @@ export const useBadmintonStore = defineStore('badminton', {
 
       if (!bestCombination) return null
 
-             // จัดเรียงผู้เล่นให้ทีม A และ B ผสมเพศให้ดีที่สุด
-       const arrangedPlayers = this.arrangePlayersForMixedTeams(bestCombination.players)
+      // จัดเรียงผู้เล่นให้ทีม A และ B ผสมเพศให้ดีที่สุด
+      const arrangedPlayers = this.arrangePlayersForMixedTeams(bestCombination.players)
 
-       return {
-         id: `match-${Date.now()}-${courtNumber}-${Math.random().toString(36).substr(2, 5)}`,
-         courtNumber,
-         players: arrangedPlayers,
-         type: this.determineMatchType(arrangedPlayers),
-         score: bestCombination.score,
-         roundNumber: this.currentSession.currentRound + 1,
-         status: 'playing', // 'playing', 'finished'
-         result: null, // จะเก็บผลการแข่งขัน
-         winner: null
-       }
+      return {
+        id: `match-${Date.now()}-${courtNumber}-${Math.random().toString(36).substr(2, 5)}`,
+        courtNumber,
+        players: arrangedPlayers,
+        type: this.determineMatchType(arrangedPlayers),
+        score: bestCombination.score,
+        roundNumber: this.currentSession.currentRound + 1,
+        status: 'playing', // 'playing', 'finished'
+        result: null, // จะเก็บผลการแข่งขัน
+        winner: null
+      }
     },
 
     // หาการจับคู่ที่ดีที่สุดสำหรับคอร์ดหนึ่ง (ปรับปรุงให้มีความสุ่มมากขึ้น)
@@ -672,7 +706,7 @@ export const useBadmintonStore = defineStore('badminton', {
         participants: [...this.activePlayers],
         rounds: [],
         currentRound: 0,
-        pairHistory: new Map(),
+        pairHistory: {},
         totalCost: this.totalCost
       }
     },
@@ -702,8 +736,19 @@ export const useBadmintonStore = defineStore('badminton', {
       // ไปรอบถัดไป
       this.currentSession.currentRound++
 
-      // สร้างการจับคู่ใหม่
-      this.generateMatches()
+      // ถ้าเป็นโหมด Winner Stays On ให้ reset ข้อมูลและเริ่มใหม่
+      if (this.isWinnerStaysOnMode) {
+        // Reset win streaks และ player rounds
+        this.winnerStaysOnData.courtWinStreaks = {}
+        this.winnerStaysOnData.matchHistory = []
+        this.resetPlayerRounds()
+
+        // สร้างการจับคู่ใหม่แบบ Winner Stays On
+        this.generateWinnerStaysOnMatches()
+      } else {
+        // สร้างการจับคู่ใหม่แบบปกติ
+        this.generateMatches()
+      }
 
       return true
     },
@@ -747,7 +792,7 @@ export const useBadmintonStore = defineStore('badminton', {
         participants: [],
         rounds: [],
         currentRound: 0,
-        pairHistory: new Map(),
+        pairHistory: {},
         totalCost: 0
       }
       this.currentMatches = []
@@ -756,7 +801,7 @@ export const useBadmintonStore = defineStore('badminton', {
     // ดูประวัติการจับคู่ในเซสชั่นปัจจุบัน
     getPairHistory() {
       const history = []
-      for (const [pairKey, count] of this.currentSession.pairHistory.entries()) {
+      for (const [pairKey, count] of Object.entries(this.currentSession.pairHistory)) {
         const [player1Id, player2Id] = pairKey.split('-').map(Number)
         const player1 = this.players.find(p => p.id === player1Id)
         const player2 = this.players.find(p => p.id === player2Id)
@@ -991,9 +1036,503 @@ export const useBadmintonStore = defineStore('badminton', {
       return this.generateMatches()
     },
 
-    // ฟังก์ชันสุ่มแบบใหม่ทั้งหมด
-    randomMatch() {
-      return this.generateRandomMatches()
-    }
+    // ========== WINNER STAYS ON MODE ==========
+
+    // เริ่มโหมด Winner Stays On
+    startWinnerStaysOnMode() {
+      if (this.activePlayers.length < 4) {
+        return { success: false, message: 'ต้องการผู้เล่นอย่างน้อย 4 คน' }
+      }
+
+      // เปลี่ยนโหมดเกม
+      this.gameSettings.gameMode = 'winnerStaysOn'
+      this.winnerStaysOnData.isActive = true
+      this.winnerStaysOnData.courtWinStreaks = {}
+      this.winnerStaysOnData.matchHistory = []
+      this.resetPlayerRounds() // รีเซ็ตการนับรอบเมื่อเริ่มโหมดใหม่
+
+      // เริ่ม session หากยังไม่มี
+      if (!this.hasActiveSession) {
+        this.startSession()
+        this.currentSession.mode = 'winnerStaysOn'
+      }
+
+      // สร้างการจับคู่เริ่มต้น
+      return this.generateWinnerStaysOnMatches()
+    },
+
+    // สร้างการจับคู่แบบ Winner Stays On
+    generateWinnerStaysOnMatches() {
+      if (!this.winnerStaysOnData.isActive || this.activePlayers.length < 4) {
+        return { success: false, message: 'ไม่สามารถสร้างการจับคู่ได้' }
+      }
+
+      // สร้างการจับคู่เริ่มต้นสำหรับแต่ละคอร์ด
+      const matches = []
+
+      // ใช้อัลกอริทึมการจับคู่ผสมเพศที่มีประสิทธิภาพ
+      const malePlayers = this.shuffleArray(this.activePlayers.filter(p => p.gender === 'male'))
+      const femalePlayers = this.shuffleArray(this.activePlayers.filter(p => p.gender === 'female'))
+
+      const maxCourts = Math.min(this.gameSettings.courts, Math.floor(this.activePlayers.length / 4))
+
+      // สร้างกลุ่มที่ผสมเพศให้ได้มากที่สุด
+      const mixedGroups = this.createMixedGenderGroupsWithHistory(malePlayers, femalePlayers, maxCourts)
+
+      for (let court = 0; court < mixedGroups.length; court++) {
+        const players = mixedGroups[court]
+
+        if (players.length === 4) {
+          // จัดเรียงผู้เล่นให้ทีม A และ B ผสมเพศให้ดีที่สุด
+          const arrangedPlayers = this.arrangePlayersForMixedTeams(players)
+
+          const match = {
+            id: `winner-stays-${Date.now()}-${court + 1}-${Math.random().toString(36).substr(2, 5)}`,
+            courtNumber: court + 1,
+            players: arrangedPlayers,
+            type: this.determineMatchType(arrangedPlayers),
+            status: 'playing',
+            result: null,
+            winner: null,
+            gameNumber: 1,
+            isWinnerStaysOn: true
+          }
+
+          matches.push(match)
+
+          // เริ่มต้น win streak สำหรับคอร์ดนี้
+          const teamA = arrangedPlayers.slice(0, 2)
+          const teamB = arrangedPlayers.slice(2, 4)
+
+          // Validation: ตรวจสอบทีมเริ่มต้น
+          if (teamA.length !== 2 || teamB.length !== 2) {
+            console.error(`Court ${court + 1} - Invalid initial team sizes!`, {
+              teamA: teamA.length,
+              teamB: teamB.length,
+              totalPlayers: arrangedPlayers.length
+            })
+            continue // ข้ามคอร์ดนี้
+          }
+
+
+
+          this.winnerStaysOnData.courtWinStreaks[court + 1] = {
+            teamIndex: null, // ยังไม่มีทีมชนะ
+            winCount: 0,
+            teamAPlayers: teamA,
+            teamBPlayers: teamB
+          }
+
+          // อัปเดตการนับรอบสำหรับผู้เล่นที่เข้าแข่งขันตั้งแต่แรก
+          this.updatePlayerRounds([...teamA, ...teamB].map(p => p.id))
+        }
+      }
+
+      // คำนวณผู้เล่นที่พัก
+      const playingPlayers = matches.flatMap(match => match.players.map(p => p.id))
+      this.waitingPlayers = this.activePlayers.filter(player => !playingPlayers.includes(player.id))
+
+      this.currentMatches = matches
+
+      return { success: true, matches }
+    },
+
+
+
+    // บันทึกผลการแข่งขัน
+    recordWinnerStaysOnResult(matchId, winnerTeam) {
+      const match = this.currentMatches.find(m => m.id === matchId)
+      if (!match || !match.isWinnerStaysOn) {
+        return { success: false, message: 'ไม่พบการแข่งขัน' }
+      }
+
+      const court = match.courtNumber
+      const courtData = this.winnerStaysOnData.courtWinStreaks[court]
+
+      if (!courtData) {
+        return { success: false, message: 'ไม่พบข้อมูลคอร์ด' }
+      }
+
+      // บันทึกผลการแข่งขัน
+      match.result = winnerTeam
+      match.winner = winnerTeam
+      match.status = 'completed'
+
+      // อัพเดท win streak
+      if (courtData.teamIndex === winnerTeam) {
+        // ทีมเดิมชนะต่อ
+        courtData.winCount++
+      } else {
+        // ทีมใหม่ชนะ
+        courtData.teamIndex = winnerTeam
+        courtData.winCount = 1
+      }
+
+      // บันทึกประวัติ
+      this.winnerStaysOnData.matchHistory.push({
+        matchId,
+        court,
+        gameNumber: (this.winnerStaysOnData.matchHistory.filter(h => h.court === court).length + 1),
+        teamAPlayers: [...courtData.teamAPlayers],
+        teamBPlayers: [...courtData.teamBPlayers],
+        winner: winnerTeam,
+        timestamp: new Date()
+      })
+
+      // ตรวจสอบว่าต้องเปลี่ยนทีมหรือไม่
+      return this.handleTeamRotation(court)
+    },
+
+    // จัดการการหมุนเวียนทีม
+    handleTeamRotation(court) {
+      const courtData = this.winnerStaysOnData.courtWinStreaks[court]
+      const winnerTeam = courtData.teamIndex
+      const winCount = courtData.winCount
+
+      let needsNewTeams = false
+      let message = ''
+
+      // ทีมชนะตามจำนวนที่กำหนดในการตั้งค่า หรือไม่มีผู้เล่นรอ
+      if (winCount >= this.gameSettings.winnerStaysOnWins) {
+        needsNewTeams = true
+        message = `ทีม ${winnerTeam === 0 ? 'A' : 'B'} ชนะ ${winCount} เกมส์ติดต่อกัน ต้องออกมาพัก`
+      } else if (this.waitingPlayers.length < 2) {
+        needsNewTeams = false
+        message = 'ไม่มีผู้เล่นพอสำหรับทีมใหม่ เล่นต่อระหว่างทีมเดิม'
+      } else {
+        // ทีมแพ้ออก ทีมใหม่เข้า
+        needsNewTeams = false
+        message = this.rotateLosingTeam(court)
+      }
+
+      if (needsNewTeams) {
+        return this.rotateBothTeams(court)
+      }
+
+      return { success: true, message, needsNewMatch: !needsNewTeams }
+    },
+
+    // เปลี่ยนทีมที่แพ้
+    rotateLosingTeam(court) {
+      const courtData = this.winnerStaysOnData.courtWinStreaks[court]
+      const winnerTeam = courtData.teamIndex
+      const losingTeam = winnerTeam === 0 ? 1 : 0
+
+      // Validation: ตรวจสอบข้อมูลทีม
+      if (!courtData.teamAPlayers || !courtData.teamBPlayers) {
+        console.error('Team data is missing!')
+        return 'ข้อมูลทีมผิดพลาด'
+      }
+
+      if (courtData.teamAPlayers.length !== 2 || courtData.teamBPlayers.length !== 2) {
+        console.error('Team sizes are incorrect!', {
+          teamA: courtData.teamAPlayers.length,
+          teamB: courtData.teamBPlayers.length
+        })
+        return 'ขนาดทีมไม่ถูกต้อง'
+      }
+
+      // ย้ายทีมที่แพ้ไปพัก
+      const losingPlayers = losingTeam === 0 ? courtData.teamAPlayers : courtData.teamBPlayers
+
+      // Validation: ตรวจสอบทีมที่แพ้
+      if (!losingPlayers || losingPlayers.length !== 2) {
+        return 'ข้อมูลทีมที่แพ้ผิดพลาด'
+      }
+
+      this.waitingPlayers.push(...losingPlayers)
+
+      // สร้างทีมใหม่จากผู้เล่นที่รอ (ยกเว้นคนที่เพิ่งออกจากคอร์ดนี้)
+      const excludedPlayerIds = losingPlayers.map(p => p.id)
+      const newTeam = this.createNewMixedTeam(excludedPlayerIds)
+
+      // Validation: ตรวจสอบทีมใหม่
+      if (newTeam.length !== 2) {
+        return `ไม่สามารถสร้างทีมใหม่ได้ (มีผู้เล่นรอ ${this.waitingPlayers.length} คน)`
+      }
+
+      // แทนที่ทีมที่แพ้
+      if (losingTeam === 0) {
+        courtData.teamAPlayers = [...newTeam]
+      } else {
+        courtData.teamBPlayers = [...newTeam]
+      }
+
+      // Validation: ตรวจสอบหลังการแทนที่
+      if (courtData.teamAPlayers.length !== 2 || courtData.teamBPlayers.length !== 2) {
+        return 'การแทนที่ทีมผิดพลาด'
+      }
+
+      // สร้างการแข่งขันใหม่
+      const newMatch = this.createNewMatchForCourt(court)
+
+      // Validation: ตรวจสอบ match ใหม่
+      if (!newMatch || newMatch.players.length !== 4) {
+        return 'สร้างการแข่งขันใหม่ไม่สำเร็จ'
+      }
+
+      // ไม่รีเซ็ต win count เพราะทีมชนะยังคงเป็นทีมเดิม
+      // winCount จะถูกรีเซ็ตเฉพาะเมื่อมีการเปลี่ยนทีมชนะเท่านั้น
+
+      return `ทีม ${losingTeam === 0 ? 'A' : 'B'} ออกมาพัก ทีมใหม่เข้าไป`
+    },
+
+    // เปลี่ยนทั้งสองทีม
+    rotateBothTeams(court) {
+      const courtData = this.winnerStaysOnData.courtWinStreaks[court]
+
+      // ย้ายทุกคนไปพัก
+      const allLeavingPlayers = [...courtData.teamAPlayers, ...courtData.teamBPlayers]
+      this.waitingPlayers.push(...allLeavingPlayers)
+
+      // สร้างทีมใหม่ 2 ทีม (ยกเว้นคนที่เพิ่งออกจากคอร์ดนี้)
+      const excludedPlayerIds = allLeavingPlayers.map(p => p.id)
+      const newTeamA = this.createNewMixedTeam(excludedPlayerIds)
+      const newTeamB = this.createNewMixedTeam(excludedPlayerIds)
+
+      if (newTeamA.length === 2 && newTeamB.length === 2) {
+        courtData.teamAPlayers = newTeamA
+        courtData.teamBPlayers = newTeamB
+        courtData.teamIndex = null
+        courtData.winCount = 0
+
+        // สร้างการแข่งขันใหม่
+        this.createNewMatchForCourt(court)
+
+        return {
+          success: true,
+          message: 'ทั้งสองทีมออกมาพัก ทีมใหม่เข้าไป',
+          needsNewMatch: true
+        }
+      }
+
+      return {
+        success: false,
+        message: 'ไม่มีผู้เล่นพอสำหรับทีมใหม่ 2 ทีม'
+      }
+    },
+
+    // อัปเดตการนับรอบการเล่นของผู้เล่น
+    updatePlayerRounds(playerIds) {
+      if (!this.winnerStaysOnData.isActive) return
+
+      playerIds.forEach(playerId => {
+        if (!this.winnerStaysOnData.playerRounds[playerId]) {
+          this.winnerStaysOnData.playerRounds[playerId] = 0
+        }
+        this.winnerStaysOnData.playerRounds[playerId]++
+      })
+    },
+
+    // จัดลำดับผู้เล่นตามจำนวนรอบที่เล่น (น้อยไปมาก = ความสำคัญมากไปน้อย)
+    sortPlayersByPlayCount(players) {
+      if (!this.winnerStaysOnData.isActive) return players
+
+      return [...players].sort((a, b) => {
+        const aRounds = this.winnerStaysOnData.playerRounds[a.id] || 0
+        const bRounds = this.winnerStaysOnData.playerRounds[b.id] || 0
+        return aRounds - bRounds // น้อยกว่าขึ้นก่อน (ความสำคัญสูงกว่า)
+      })
+    },
+
+    // รีเซ็ตการนับรอบการเล่น
+    resetPlayerRounds() {
+      this.winnerStaysOnData.playerRounds = {}
+    },
+
+    // สร้างทีมผสมใหม่จากผู้เล่นที่รอ (จัดลำดับความสำคัญ)
+    createNewMixedTeam(excludedPlayerIds = []) {
+      // กรองผู้เล่นที่รอ โดยยกเว้นคนที่เพิ่งออกจากคอร์ด
+      const availableWaitingPlayers = this.waitingPlayers.filter(p => !excludedPlayerIds.includes(p.id))
+
+      // Validation: ตรวจสอบผู้เล่นที่รอ
+      if (availableWaitingPlayers.length < 2) {
+        return []
+      }
+
+      // จัดลำดับผู้เล่นตามจำนวนรอบที่เล่น (คนที่เล่นน้อยขึ้นก่อน)
+      const sortedWaitingPlayers = this.sortPlayersByPlayCount(availableWaitingPlayers)
+
+      const waitingMales = this.sortPlayersByPlayCount(sortedWaitingPlayers.filter(p => p.gender === 'male'))
+      const waitingFemales = this.sortPlayersByPlayCount(sortedWaitingPlayers.filter(p => p.gender === 'female'))
+
+      let newTeam = []
+
+      // พยายามให้ได้ 1 ชาย 1 หญิง โดยเลือกคนที่เล่นน้อยที่สุดก่อน
+      if (waitingMales.length >= 1 && waitingFemales.length >= 1) {
+        // เลือกชายที่เล่นน้อยที่สุด (อันดับแรกใน sorted array)
+        const selectedMale = waitingMales[0]
+        // เลือกหญิงที่เล่นน้อยที่สุด (อันดับแรกใน sorted array)
+        const selectedFemale = waitingFemales[0]
+
+        newTeam = [selectedMale, selectedFemale]
+
+        // เอาออกจากรายการรอ
+        const maleIndex = this.waitingPlayers.findIndex(p => p.id === selectedMale.id)
+        const femaleIndex = this.waitingPlayers.findIndex(p => p.id === selectedFemale.id)
+
+        if (maleIndex > -1) {
+          this.waitingPlayers.splice(maleIndex, 1)
+        }
+
+        // ต้องหา index ใหม่หลังจากลบ male แล้ว
+        const newFemaleIndex = this.waitingPlayers.findIndex(p => p.id === selectedFemale.id)
+        if (newFemaleIndex > -1) {
+          this.waitingPlayers.splice(newFemaleIndex, 1)
+        }
+      } else if (availableWaitingPlayers.length >= 2) {
+        // ถ้าไม่สามารถผสมได้ ก็เลือก 2 คนที่เล่นน้อยที่สุด
+        newTeam = sortedWaitingPlayers.slice(0, 2)
+
+        // เอาออกจากรายการรอ
+        newTeam.forEach((player, index) => {
+          const playerIndex = this.waitingPlayers.findIndex(p => p.id === player.id)
+          if (playerIndex > -1) {
+            this.waitingPlayers.splice(playerIndex, 1)
+          }
+        })
+      }
+
+      // Validation: ตรวจสอบทีมที่สร้างขึ้น
+      if (newTeam.length !== 2) {
+        return []
+      }
+
+      // อัปเดตการนับรอบสำหรับผู้เล่นที่ได้เลือก
+      this.updatePlayerRounds(newTeam.map(p => p.id))
+
+      return newTeam
+    },
+
+    // สร้างการแข่งขันใหม่สำหรับคอร์ด
+    createNewMatchForCourt(court) {
+      const courtData = this.winnerStaysOnData.courtWinStreaks[court]
+
+      // Validation: ตรวจสอบข้อมูลทีม
+      if (!courtData.teamAPlayers || !courtData.teamBPlayers) {
+        console.error('Team data missing in createNewMatchForCourt!')
+        return null
+      }
+
+      if (courtData.teamAPlayers.length !== 2 || courtData.teamBPlayers.length !== 2) {
+        console.error('Invalid team sizes in createNewMatchForCourt!', {
+          teamA: courtData.teamAPlayers.length,
+          teamB: courtData.teamBPlayers.length
+        })
+        return null
+      }
+
+      const players = [...courtData.teamAPlayers, ...courtData.teamBPlayers]
+
+      // Validation: ตรวจสอบผู้เล่นรวม
+      if (players.length !== 4) {
+        console.error('Invalid total players count!', players.length)
+        return null
+      }
+
+      const newMatch = {
+        id: `winner-stays-${Date.now()}-${court}-${Math.random().toString(36).substr(2, 5)}`,
+        courtNumber: court,
+        players: players,
+        type: this.determineMatchType(players),
+        status: 'playing',
+        result: null,
+        winner: null,
+        gameNumber: this.winnerStaysOnData.matchHistory.filter(h => h.court === court).length + 1,
+        isWinnerStaysOn: true
+      }
+
+      // แทนที่การแข่งขันเดิมในคอร์ดนี้ (force reactivity update)
+      const matchIndex = this.currentMatches.findIndex(m => m.courtNumber === court)
+
+      if (matchIndex > -1) {
+        // ใช้ splice เพื่อให้ Vue สังเกตการเปลี่ยนแปลง
+        this.currentMatches.splice(matchIndex, 1, newMatch)
+      } else {
+        this.currentMatches.push(newMatch)
+      }
+
+      return newMatch
+    },
+
+    // หยุดโหมด Winner Stays On
+    stopWinnerStaysOnMode() {
+      this.winnerStaysOnData.isActive = false
+      this.gameSettings.gameMode = 'normal'
+      this.currentMatches = []
+      this.waitingPlayers = []
+      this.resetPlayerRounds() // รีเซ็ตการนับรอบ
+
+      return { success: true, message: 'หยุดโหมด Winner Stays On แล้ว' }
+    },
+
+    // ========== FIRESTORE GAME SETTINGS ==========
+
+    // โหลดการตั้งค่าจาก Firestore
+    async loadGameSettingsFromFirestore(userId) {
+      if (!userId) return
+
+      try {
+        const settingsRef = doc(db, 'gameSettings', userId)
+        const settingsDoc = await getDoc(settingsRef)
+
+        if (settingsDoc.exists()) {
+          const firestoreSettings = settingsDoc.data()
+
+          // อัพเดทการตั้งค่า โดยรักษาค่า default ไว้ถ้าไม่มี
+          this.gameSettings = {
+            ...this.gameSettings,
+            ...firestoreSettings
+          }
+
+          console.log('GameSettings loaded from Firestore:', this.gameSettings)
+          return { success: true, settings: this.gameSettings }
+        } else {
+          // ถ้าไม่มีการตั้งค่าใน Firestore ให้บันทึกค่า default ไป
+          await this.saveGameSettingsToFirestore(userId)
+          console.log('No settings found in Firestore, saved default settings')
+          return { success: true, settings: this.gameSettings }
+        }
+      } catch (error) {
+        console.error('Error loading game settings from Firestore:', error)
+        return { success: false, error: error.message }
+      }
+    },
+
+    // บันทึกการตั้งค่าไป Firestore
+    async saveGameSettingsToFirestore(userId) {
+      if (!userId) return
+
+      try {
+        const settingsRef = doc(db, 'gameSettings', userId)
+        const settingsData = {
+          ...this.gameSettings,
+          updatedAt: new Date(),
+          version: '1.0'
+        }
+
+        await setDoc(settingsRef, settingsData)
+        console.log('GameSettings saved to Firestore:', settingsData)
+        return { success: true }
+      } catch (error) {
+        console.error('Error saving game settings to Firestore:', error)
+        return { success: false, error: error.message }
+      }
+    },
+
+    // อัพเดทการตั้งค่าและบันทึกไป Firestore
+    async updateGameSettingsWithFirestore(settings, userId) {
+      // อัพเดทใน local store ก่อน
+      this.updateGameSettings(settings)
+
+      // แล้วบันทึกไป Firestore
+      if (userId) {
+        return await this.saveGameSettingsToFirestore(userId)
+      }
+
+      return { success: true }
+    },
+
+
   }
 })

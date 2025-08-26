@@ -1,25 +1,25 @@
 <template>
   <q-page class="simple-page">
     <!-- Header -->
-    <div class="simple-header">
+    <div class="simple-header compact-mobile">
       <div class="player-count">
         <div class="gender-count">
-          <q-icon name="male" size="md" color="blue" />
+          <q-icon name="male" size="sm" color="blue" />
           <span class="count-text">{{ activeMalePlayers.length }}</span>
         </div>
         <div class="gender-count">
-          <q-icon name="female" size="md" color="pink" />
+          <q-icon name="female" size="sm" color="pink" />
           <span class="count-text">{{ activeFemalePlayers.length }}</span>
         </div>
       </div>
 
       <div class="court-count">
-        <q-icon name="sports_tennis" size="lg" color="orange" />
+        <q-icon name="sports_tennis" size="md" color="orange" />
         <span class="count-text">{{ gameSettings.courts }} คอร์ด</span>
       </div>
 
       <div v-if="hasActiveSession" class="round-info">
-        <q-icon name="schedule" size="lg" color="green" />
+        <q-icon name="schedule" size="md" color="green" />
         <span class="count-text">รอบที่ {{ currentRoundNumber }}</span>
       </div>
     </div>
@@ -117,7 +117,11 @@
                   <div v-for="player in getTeamA(match)" :key="player.id" class="player-name">
                     <q-icon :name="player.gender === 'male' ? 'male' : 'female'"
                       :color="player.gender === 'male' ? 'blue' : 'pink'" size="sm" />
-                    {{ player.name }}
+                    <span class="player-text">{{ player.name }}</span>
+                    <div class="player-actions">
+                      <q-btn dense flat round size="sm" icon="swap_horiz" :title="'สลับผู้เล่น'"
+                        @click="openSwapDialog(match.id, player.id)" />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -141,7 +145,11 @@
                   <div v-for="player in getTeamB(match)" :key="player.id" class="player-name">
                     <q-icon :name="player.gender === 'male' ? 'male' : 'female'"
                       :color="player.gender === 'male' ? 'blue' : 'pink'" size="sm" />
-                    {{ player.name }}
+                    <span class="player-text">{{ player.name }}</span>
+                    <div class="player-actions">
+                      <q-btn dense flat round size="sm" icon="swap_horiz" :title="'สลับผู้เล่น'"
+                        @click="openSwapDialog(match.id, player.id)" />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -149,12 +157,12 @@
 
             <!-- Winner Stays On Result Buttons -->
             <div v-if="isWinnerStaysOnMode && match.status === 'playing'" class="match-result-section">
-              <div class="result-title">ผลการแข่งขัน</div>
+              <!-- <div class="result-title">ผลการแข่งขัน</div> -->
               <div class="result-buttons">
-                <q-btn color="blue" label="ทีม A ชนะ" icon="military_tech" @click="recordMatchResult(match.id, 0)"
-                  :loading="loading" size="md" class="result-btn" />
-                <q-btn color="purple" label="ทีม B ชนะ" icon="military_tech" @click="recordMatchResult(match.id, 1)"
-                  :loading="loading" size="md" class="result-btn" />
+                <!-- <q-btn color="secondary" label="สลับผู้เล่น" icon="swap_horiz" @click="openSwapDialogByCourt(match.id)"
+                  :loading="loading" size="md" class="result-btn" flat /> -->
+                <q-btn color="primary" label="จบเกมส์" icon="how_to_vote" @click="openWinnerDialog(match.id)"
+                  :loading="loading" size="xl" class="big-end-btn" rounded unelevated />
               </div>
             </div>
 
@@ -181,9 +189,55 @@
           :icon="player.gender === 'male' ? 'male' : 'female'">
           {{ player.name }}
           <span v-if="isWinnerStaysOnMode" class="rounds-count">({{ getPlayerRoundsPlayed(player.id) }} รอบ)</span>
+          <q-btn class="q-ml-xs" dense flat round size="xs"
+            :icon="isManuallyResting(player.id) ? 'play_arrow' : 'pause'"
+            :title="isManuallyResting(player.id) ? 'ปลดพัก' : 'พักผู้เล่น'" @click="toggleManualRest(player.id)" />
         </q-chip>
       </div>
     </div>
+
+    <!-- Swap Dialog -->
+    <q-dialog v-model="swapDialog.open">
+      <q-card class="swap-dialog-card" style="min-width: 320px; max-width: 420px;">
+        <q-card-section class="text-h6">
+          สลับผู้เล่น
+        </q-card-section>
+        <q-card-section>
+          <div class="q-mb-sm">
+            <q-option-group v-model="swapDialog.sourceMode" :options="swapSourceOptions" type="radio" inline dense />
+          </div>
+          <div class="q-mb-md">
+            <q-select v-model="swapDialog.replacementId" :options="swapDialog.candidates" option-value="id"
+              option-label="name" emit-value map-options outlined dense label="เลือกผู้เล่นที่เข้าแทน" />
+          </div>
+          <!-- <q-toggle v-model="swapDialog.restOut" label="พักผู้เล่นที่ออก" /> -->
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="ยกเลิก" color="grey" v-close-popup />
+          <q-btn unelevated label="ยืนยัน" color="primary" @click="confirmSwap" :disable="!swapDialog.replacementId" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- Winner Select Dialog -->
+    <q-dialog v-model="winnerDialog.open">
+      <q-card style="min-width: 320px; max-width: 420px;">
+        <q-card-section class="text-h6">
+          เลือกทีมที่ชนะ
+        </q-card-section>
+        <q-card-section>
+          <div class="q-gutter-sm">
+            <q-btn outline color="blue" class="full-width" :label="winnerDialog.labels.teamA" icon="military_tech"
+              @click="confirmWinner(0)" />
+            <q-btn outline color="purple" class="full-width" :label="winnerDialog.labels.teamB" icon="military_tech"
+              @click="confirmWinner(1)" />
+          </div>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="ยกเลิก" color="grey" v-close-popup />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
 
     <!-- Pair History Info -->
     <!-- <div v-if="hasActiveSession && currentMatches.length > 0" class="pair-history-info">
@@ -224,7 +278,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { useBadmintonStore } from 'stores/badminton-store'
 import { useAuthStore } from 'stores/auth-store'
 import { useQuasar } from 'quasar'
@@ -237,6 +291,32 @@ const $q = useQuasar()
 
 const loading = ref(false)
 
+// Swap dialog state
+const swapDialog = ref({
+  open: false,
+  matchId: null,
+  outPlayerId: null,
+  restOut: true,
+  replacementId: null,
+  candidates: [],
+  sourceMode: 'resting'
+})
+
+const swapSourceOptions = [
+  { label: 'เฉพาะผู้เล่นที่พักอยู่', value: 'resting' },
+  { label: 'ผู้เล่นทั้งหมด', value: 'all' }
+]
+
+// Winner dialog state
+const winnerDialog = ref({
+  open: false,
+  matchId: null,
+  labels: {
+    teamA: 'ทีม A ชนะ',
+    teamB: 'ทีม B ชนะ'
+  }
+})
+
 // Computed properties
 const totalPlayers = computed(() => badmintonStore.totalPlayers)
 const activePlayers = computed(() => badmintonStore.activePlayers)
@@ -245,6 +325,8 @@ const activeFemalePlayers = computed(() => badmintonStore.activePlayers.filter(p
 const gameSettings = computed(() => badmintonStore.gameSettings)
 const currentMatches = computed(() => badmintonStore.currentMatches)
 const restingPlayers = computed(() => badmintonStore.restingPlayers)
+// Feature detection for manual rest (store may not provide it if disabled)
+const hasManualRestFeature = computed(() => Array.isArray(badmintonStore.manualRestingPlayerIds) && typeof badmintonStore.toggleManualRest === 'function')
 const hasActiveSession = computed(() => badmintonStore.hasActiveSession)
 const currentRoundNumber = computed(() => badmintonStore.currentRoundNumber)
 
@@ -265,6 +347,135 @@ function getTeamA(match) {
 
 function getTeamB(match) {
   return match.players.slice(2, 4)
+}
+function isManuallyResting(playerId) {
+  const list = badmintonStore.manualRestingPlayerIds
+  return Array.isArray(list) ? list.includes(playerId) : false
+}
+
+// Manual rest toggle
+function toggleManualRest(playerId) {
+  if (typeof badmintonStore.toggleManualRest === 'function') {
+    badmintonStore.toggleManualRest(playerId)
+    const list = badmintonStore.manualRestingPlayerIds
+    const nowRest = Array.isArray(list) ? list.includes(playerId) : false
+    $q.notify({ type: nowRest ? 'warning' : 'positive', message: nowRest ? 'พักผู้เล่นแล้ว' : 'ปลดพักผู้เล่นแล้ว', position: 'top' })
+  } else {
+    $q.notify({ type: 'warning', message: 'ยังไม่ได้เปิดใช้ฟีเจอร์พักผู้เล่น', position: 'top' })
+  }
+}
+
+// Open swap dialog
+function openSwapDialog(matchId, outPlayerId) {
+  swapDialog.value = {
+    open: true,
+    matchId,
+    outPlayerId,
+    restOut: true,
+    replacementId: null,
+    candidates: [],
+    sourceMode: 'resting'
+  }
+  updateSwapCandidates()
+}
+
+function openSwapDialogByCourt(matchId) {
+  // เปิด dialog แบบไม่ fix outPlayer ให้ผู้จัดเลือกใน select เอง
+  swapDialog.value = {
+    open: true,
+    matchId,
+    outPlayerId: null,
+    restOut: true,
+    replacementId: null,
+    candidates: [],
+    sourceMode: 'resting'
+  }
+  updateSwapCandidates()
+}
+
+function getSwapCandidatePool() {
+  const mode = swapDialog.value.sourceMode
+  const outId = swapDialog.value.outPlayerId
+  let pool = []
+  if (mode === 'resting') {
+    pool = Array.isArray(restingPlayers.value) ? restingPlayers.value : []
+  } else {
+    pool = Array.isArray(activePlayers.value) ? activePlayers.value : []
+  }
+  return pool.filter(p => p && p.id !== outId)
+}
+
+function updateSwapCandidates() {
+  const pool = getSwapCandidatePool()
+  swapDialog.value.candidates = pool
+  if (!pool.some(p => p.id === swapDialog.value.replacementId)) {
+    swapDialog.value.replacementId = pool[0]?.id || null
+  }
+  if (pool.length === 0) {
+    $q.notify({ type: 'warning', message: 'ยังไม่มีผู้เล่นว่างตามตัวเลือกที่เลือก', position: 'top' })
+  }
+}
+
+watch(() => swapDialog.value.sourceMode, () => updateSwapCandidates())
+watch(() => swapDialog.value.outPlayerId, () => updateSwapCandidates())
+
+async function confirmSwap() {
+  const { matchId, outPlayerId, replacementId, restOut } = swapDialog.value
+  if (!replacementId) return
+  if (typeof badmintonStore.replacePlayerInMatch === 'function') {
+    const result = badmintonStore.replacePlayerInMatch(matchId, outPlayerId, replacementId, { restOutPlayer: restOut })
+    if (result.success) {
+      $q.notify({ type: 'positive', message: 'สลับผู้เล่นสำเร็จ', position: 'top' })
+    } else {
+      $q.notify({ type: 'negative', message: result.message || 'สลับผู้เล่นไม่สำเร็จ', position: 'top' })
+    }
+  } else {
+    // Fallback: สลับใน currentMatches โดยตรง (รองรับข้ามคอร์ด)
+    const matches = badmintonStore.currentMatches || []
+    const matchAIndex = matches.findIndex(m => m.id === matchId)
+    if (matchAIndex === -1) return
+    const matchA = matches[matchAIndex]
+    const outIdx = matchA.players.findIndex(p => p.id === outPlayerId)
+    const inPlayer = (badmintonStore.players || badmintonStore.activePlayers || []).find(p => p.id === replacementId)
+    if (outIdx === -1 || !inPlayer) return
+    const otherMatchIndex = matches.findIndex(m => m.players?.some(p => p.id === replacementId))
+    if (otherMatchIndex !== -1) {
+      const matchB = matches[otherMatchIndex]
+      const repIdx = matchB.players.findIndex(p => p.id === replacementId)
+      const newA = [...matchA.players]
+      const newB = [...matchB.players]
+      const outPlayer = newA[outIdx]
+      newA.splice(outIdx, 1, inPlayer)
+      newB.splice(repIdx, 1, outPlayer)
+      badmintonStore.currentMatches.splice(matchAIndex, 1, { ...matchA, players: newA })
+      badmintonStore.currentMatches.splice(otherMatchIndex, 1, { ...matchB, players: newB })
+    } else {
+      const newA = [...matchA.players]
+      newA.splice(outIdx, 1, inPlayer)
+      badmintonStore.currentMatches.splice(matchAIndex, 1, { ...matchA, players: newA })
+    }
+    $q.notify({ type: 'positive', message: 'สลับผู้เล่นสำเร็จ', position: 'top' })
+  }
+  swapDialog.value.open = false
+}
+
+function openWinnerDialog(matchId) {
+  winnerDialog.value.open = true
+  winnerDialog.value.matchId = matchId
+  // แสดงชื่อทีมพร้อมผู้เล่นแบบย่อเพื่อความเข้าใจ
+  const match = currentMatches.value.find(m => m.id === matchId)
+  if (match) {
+    const teamA = match.players.slice(0, 2).map(p => p.name).join(' + ')
+    const teamB = match.players.slice(2, 4).map(p => p.name).join(' + ')
+    winnerDialog.value.labels.teamA = `ทีม A: ${teamA}`
+    winnerDialog.value.labels.teamB = `ทีม B: ${teamB}`
+  }
+}
+
+async function confirmWinner(teamIndex) {
+  if (!winnerDialog.value.matchId) return
+  await recordMatchResult(winnerDialog.value.matchId, teamIndex)
+  winnerDialog.value.open = false
 }
 
 // Winner Stays On functions
@@ -696,15 +907,35 @@ function endSession() {
   padding: 4px 8px;
   background: #f5f5f5;
   border-radius: 8px;
+  min-height: 40px;
+  /* ให้สูงพอรองรับ 2 บรรทัดโดยไม่ดันการ์ดคอร์ด */
+}
+
+.player-actions {
+  display: inline-flex;
+  margin-left: 6px;
+}
+
+/* บังคับชื่อผู้เล่นให้ตัดคำและจำกัดจำนวนบรรทัด เพื่อความสูงสม่ำเสมอ */
+.player-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-clamp: 2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+  line-height: 1.2;
+  text-align: left;
 }
 
 .vs-separator {
-  font-size: 20px;
+  font-size: 14px;
   font-weight: bold;
   color: #666;
   background: #f0f0f0;
-  width: 50px;
-  height: 50px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -778,26 +1009,108 @@ function endSession() {
 }
 
 @media (max-width: 480px) {
-  .simple-header {
-    flex-direction: column;
-    gap: 20px;
+  .simple-header.compact-mobile {
+    flex-direction: row;
+    gap: 12px;
+    margin-bottom: 16px;
+    padding: 8px 12px;
+    background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+    border-radius: 12px;
+  }
+
+  .simple-header.compact-mobile .count-text {
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .simple-header.compact-mobile .gender-count,
+  .simple-header.compact-mobile .court-count,
+  .simple-header.compact-mobile .round-info {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .simple-header.compact-mobile .player-count {
+    gap: 8px;
   }
 
   .round-actions {
-    flex-direction: column;
-    align-items: center;
+    flex-direction: row;
+    justify-content: center;
+    gap: 12px;
+  }
+
+  /* Court Cards Mobile Optimization */
+  .court-card {
+    margin-bottom: 16px;
+    border-radius: 12px;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  }
+
+  .court-card .q-card-section {
+    padding: 12px;
+  }
+
+  .court-header {
+    margin-bottom: 12px;
+  }
+
+  .court-header .q-chip {
+    font-size: 13px;
+    padding: 4px 8px;
   }
 
   .teams-container {
     grid-template-columns: 1fr;
-    gap: 12px;
+    gap: 8px;
+  }
+
+  .team {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 8px;
+    margin-bottom: 8px;
+  }
+
+  .team-name {
+    font-size: 14px;
+    margin-bottom: 8px;
+  }
+
+  .team-name .q-chip {
+    font-size: 11px;
+    padding: 2px 6px;
+  }
+
+  .player-name {
+    font-size: 12px;
+    padding: 6px;
+    min-height: 32px;
+    border-radius: 6px;
+  }
+
+  .player-text {
+    font-size: 12px;
+    max-width: 140px;
   }
 
   .vs-separator {
-    width: 40px;
-    height: 40px;
-    font-size: 16px;
-    justify-self: center;
+    width: 32px;
+    height: 32px;
+    font-size: 12px;
+    margin: 4px auto;
+  }
+
+  .match-result-section {
+    margin-top: 12px;
+    padding: 12px;
+    border-radius: 6px;
+  }
+
+  .big-end-btn {
+    min-height: 44px;
+    font-size: 14px;
   }
 }
 
@@ -853,6 +1166,34 @@ function endSession() {
 .result-btn {
   flex: 1;
   max-width: 140px;
+}
+
+.big-end-btn {
+  width: 100%;
+  max-width: 320px;
+  min-height: 56px;
+  font-size: 18px;
+  font-weight: bold;
+}
+
+/* Compact swap dialog for mobile */
+.swap-dialog-card {
+  padding: 8px;
+}
+
+@media (max-width: 480px) {
+  .swap-dialog-card {
+    min-width: 280px !important;
+    max-width: 320px !important;
+  }
+
+  .swap-dialog-card .q-card__section {
+    padding: 8px 12px;
+  }
+
+  .swap-dialog-card .q-option-group {
+    font-size: 12px;
+  }
 }
 
 .match-completed {

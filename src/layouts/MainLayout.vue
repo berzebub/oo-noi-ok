@@ -2,34 +2,25 @@
   <q-layout view="lHh Lpr lFf" class="mobile-layout">
     <!-- Top Header - สำหรับ Mobile/iPad -->
     <q-header elevated class="bg-gradient-primary text-white mobile-header">
-      <q-toolbar class="q-pa-md">
+      <q-toolbar class="q-pa-sm mobile-toolbar">
         <q-toolbar-title class="text-center">
           <div class="header-title">
-            <q-icon name="sports_tennis" size="md" class="q-mr-sm animate-pulse" />
-            <span class="text-h5">Quick Badmin</span>
+            <q-icon name="sports_tennis" size="sm" class="q-mr-sm animate-pulse" />
+            <span class="text-subtitle1 text-weight-bold">Quick Badmin</span>
           </div>
-          <div class="text-caption header-subtitle">
+          <div class="text-caption header-subtitle hide-on-mobile-compact">
             ระบบจับคู่แบดมินตันอัตโนมัติ
           </div>
         </q-toolbar-title>
 
         <div class="header-actions">
           <!-- User Menu -->
-          <q-btn-dropdown
-            v-if="authStore.isLoggedIn"
-            flat
-            dense
-            rounded
-            class="user-menu"
-          >
+          <q-btn-dropdown v-if="authStore.isLoggedIn" flat dense rounded class="user-menu">
             <template v-slot:label>
               <div class="user-info">
                 <q-avatar size="32px">
-                  <img
-                    v-if="authStore.userPhotoURL && !authStore.isOfflineMode"
-                    :src="authStore.userPhotoURL"
-                    :alt="authStore.userDisplayName"
-                  >
+                  <img v-if="authStore.userPhotoURL && !authStore.isOfflineMode" :src="authStore.userPhotoURL"
+                    :alt="authStore.userDisplayName">
                   <q-icon v-else name="account_circle" />
                 </q-avatar>
               </div>
@@ -58,15 +49,7 @@
             </q-list>
           </q-btn-dropdown>
 
-          <q-btn
-            flat
-            dense
-            round
-            icon="info"
-            @click="showInfo = true"
-            size="lg"
-            class="info-btn"
-          />
+          <q-btn flat dense round icon="info" @click="showInfo = true" size="md" class="info-btn" />
         </div>
       </q-toolbar>
     </q-header>
@@ -79,48 +62,25 @@
     <!-- Bottom Navigation - เมนูหลักสำหรับ Mobile/iPad -->
     <q-footer elevated class="bg-white text-grey-8 mobile-footer">
       <div class="bottom-nav">
-        <div
-          v-for="(item, index) in bottomNavItems"
-          :key="item.link"
-          class="nav-item"
-          :class="{ 'nav-item-active': $route.path === item.link }"
-          @click="$router.push(item.link)"
-        >
-          <q-icon
-            :name="item.icon"
-            size="lg"
-            :color="$route.path === item.link ? item.color : 'grey-6'"
-            class="nav-icon"
-          />
-          <div
-            class="nav-label"
-            :class="$route.path === item.link ? `text-${item.color}` : 'text-grey-6'"
-          >
+        <div v-for="(item, index) in bottomNavItems" :key="item.link" class="nav-item"
+          :class="{ 'nav-item-active': $route.path === item.link }" @click="$router.push(item.link)">
+          <q-icon :name="item.icon" size="lg" :color="$route.path === item.link ? item.color : 'grey-6'"
+            class="nav-icon" />
+          <div class="nav-label" :class="$route.path === item.link ? `text-${item.color}` : 'text-grey-6'">
             {{ item.title }}
           </div>
-          <div
-            v-if="$route.path === item.link"
-            class="nav-indicator"
-            :style="`background: var(--q-${item.color})`"
-          />
+          <div v-if="$route.path === item.link" class="nav-indicator" :style="`background: var(--q-${item.color})`" />
         </div>
       </div>
     </q-footer>
 
     <!-- Floating Quick Action Button -->
-    <q-btn
-      v-if="$route.path === '/'"
-      fab
-      icon="shuffle"
-      color="primary"
-      class="mobile-fab animate-pulse"
-      @click="quickMatch"
-      size="lg"
-    >
+    <!-- <q-btn v-if="$route.path === '/'" fab icon="shuffle" color="primary" class="mobile-fab animate-pulse"
+      @click="quickMatch" size="lg">
       <q-tooltip class="bg-primary text-white" :offset="[10, 10]">
         จับคู่เร็ว
       </q-tooltip>
-    </q-btn>
+    </q-btn> -->
 
     <!-- Info Dialog -->
     <q-dialog v-model="showInfo" class="mobile-dialog">
@@ -157,13 +117,7 @@
         </q-card-section>
 
         <q-card-actions align="center" class="q-pa-lg">
-          <q-btn
-            label="เริ่มใช้งาน"
-            color="primary"
-            size="lg"
-            class="full-width"
-            v-close-popup
-          />
+          <q-btn label="เริ่มใช้งาน" color="primary" size="lg" class="full-width" v-close-popup />
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -187,7 +141,7 @@ import { useRouter } from 'vue-router'
 export default defineComponent({
   name: 'MainLayout',
 
-  setup () {
+  setup() {
     const $q = useQuasar()
     const router = useRouter()
     const showInfo = ref(false)
@@ -327,6 +281,10 @@ export default defineComponent({
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
 }
 
+.mobile-toolbar {
+  min-height: 56px;
+}
+
 .header-title {
   display: flex;
   align-items: center;
@@ -362,7 +320,8 @@ export default defineComponent({
 }
 
 .mobile-content {
-  padding-bottom: 80px; /* เผื่อพื้นที่สำหรับ bottom nav */
+  padding-bottom: 80px;
+  /* เผื่อพื้นที่สำหรับ bottom nav */
 }
 
 .mobile-footer {
@@ -433,6 +392,7 @@ export default defineComponent({
   from {
     width: 0;
   }
+
   to {
     width: 32px;
   }
@@ -477,7 +437,8 @@ export default defineComponent({
 /* Responsive Design */
 @media (max-width: 768px) {
   .mobile-header .q-toolbar {
-    min-height: 64px;
+    min-height: 52px;
+    padding: 6px 8px;
   }
 
   .nav-label {
@@ -491,9 +452,22 @@ export default defineComponent({
   .mobile-content {
     padding-bottom: 75px;
   }
+
+  .header-title .q-icon {
+    font-size: 18px !important;
+  }
+
+  .header-title span {
+    font-size: 16px !important;
+  }
+
+  .hide-on-mobile-compact {
+    display: none;
+  }
 }
 
 @media (min-width: 768px) and (max-width: 1024px) {
+
   /* iPad Styles */
   .nav-item {
     padding: 12px 16px;

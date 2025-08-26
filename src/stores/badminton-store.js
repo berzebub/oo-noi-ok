@@ -1192,13 +1192,42 @@ export const useBadmintonStore = defineStore('badminton', {
       let needsNewTeams = false
       let message = ''
 
-      // ทีมชนะตามจำนวนที่กำหนดในการตั้งค่า หรือไม่มีผู้เล่นรอ
+      // ทีมชนะตามจำนวนที่กำหนดในการตั้งค่า → เอาทั้ง 4 คนออก แล้วจัดใหม่จากคิว
       if (winCount >= this.gameSettings.winnerStaysOnWins) {
-        needsNewTeams = true
-        message = `ทีม ${winnerTeam === 0 ? 'A' : 'B'} ชนะ ${winCount} เกมส์ติดต่อกัน ต้องออกมาพัก`
+        const rotateAll = this.rotateBothTeams(court)
+        return {
+          success: rotateAll.success,
+          message: rotateAll.success ? 'ทีมชนะตามโควตา ออกทั้ง 4 คนและจัดทีมใหม่แล้ว' : (rotateAll.message || 'ไม่สามารถจัดทีมใหม่ได้'),
+          needsNewMatch: true
+        }
       } else if (this.waitingPlayers.length < 2) {
-        needsNewTeams = false
-        message = 'ไม่มีผู้เล่นพอสำหรับทีมใหม่ เล่นต่อระหว่างทีมเดิม'
+        // กรณีผู้เล่นรอมีไม่ถึง 2 คน: ย้ายผู้เล่นทั้งสองทีมเข้าคิวรอ แล้วจัดทีมใหม่จากคิวรอทั้งหมด
+        const courtData = this.winnerStaysOnData.courtWinStreaks[court]
+        if (courtData && courtData.teamAPlayers && courtData.teamBPlayers) {
+          const allLeavingPlayers = [...courtData.teamAPlayers, ...courtData.teamBPlayers]
+          this.waitingPlayers.push(...allLeavingPlayers)
+
+          // เลือกทีมใหม่จากคิวรอทั้งหมดโดยไม่ยกเว้นคนที่เพิ่งออก เพื่อให้สามารถไปต่อได้
+          const newTeamA = this.createNewMixedTeam([])
+          const newTeamB = this.createNewMixedTeam([])
+
+          if (newTeamA.length === 2 && newTeamB.length === 2) {
+            courtData.teamAPlayers = newTeamA
+            courtData.teamBPlayers = newTeamB
+            courtData.teamIndex = null
+            courtData.winCount = 0
+            this.createNewMatchForCourt(court)
+            needsNewTeams = false
+            message = 'ย้ายทั้งสองทีมเข้าคิว และสร้างทีมใหม่จากคิวรอ'
+          } else {
+            // ถ้ายังไม่พอจริง ๆ ให้แจ้งเตือนชัดเจน
+            needsNewTeams = false
+            message = 'ไม่มีผู้เล่นพอสำหรับทีมใหม่'
+          }
+        } else {
+          needsNewTeams = false
+          message = 'ไม่มีผู้เล่นพอสำหรับทีมใหม่'
+        }
       } else {
         // ทีมแพ้ออก ทีมใหม่เข้า
         needsNewTeams = false
@@ -1281,14 +1310,13 @@ export const useBadmintonStore = defineStore('badminton', {
     rotateBothTeams(court) {
       const courtData = this.winnerStaysOnData.courtWinStreaks[court]
 
-      // ย้ายทุกคนไปพัก
+      // ย้ายทุกคนไปพัก แล้วคัดทีมใหม่จากคิวรอทั้งหมด (รวมผู้เล่นที่เพิ่งออกด้วย)
       const allLeavingPlayers = [...courtData.teamAPlayers, ...courtData.teamBPlayers]
       this.waitingPlayers.push(...allLeavingPlayers)
 
-      // สร้างทีมใหม่ 2 ทีม (ยกเว้นคนที่เพิ่งออกจากคอร์ดนี้)
-      const excludedPlayerIds = allLeavingPlayers.map(p => p.id)
-      const newTeamA = this.createNewMixedTeam(excludedPlayerIds)
-      const newTeamB = this.createNewMixedTeam(excludedPlayerIds)
+      // อนุญาตให้เลือกผู้เล่นที่เพิ่งออกได้เพื่อให้ไปต่อได้เสมอ
+      const newTeamA = this.createNewMixedTeam([])
+      const newTeamB = this.createNewMixedTeam([])
 
       if (newTeamA.length === 2 && newTeamB.length === 2) {
         courtData.teamAPlayers = newTeamA
